@@ -65,8 +65,30 @@
     return c.toDataURL('image/png');
   }
 
-  const icon192 = makeIcon(192);
-  const icon512 = makeIcon(512);
+  function makeMaskableIcon(size) {
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    // Full bleed — no rounded corners, no transparent pixels
+    ctx.fillStyle = '#1b1915';
+    ctx.fillRect(0, 0, size, size);
+    // Scale content into the safe zone (80% of canvas, 10% padding each side)
+    const sc = 0.8, off = size * 0.1;
+    ctx.fillStyle = '#f4efe6';
+    ctx.font = `600 ${size * 0.585 * sc}px Georgia, serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('C', off + size * sc * 0.48, off + size * sc * 0.72);
+    ctx.fillStyle = '#a0432a';
+    ctx.beginPath();
+    ctx.arc(off + size * sc * 0.743, off + size * sc * 0.29, size * 0.055 * sc, 0, Math.PI * 2);
+    ctx.fill();
+    return c.toDataURL('image/png');
+  }
+
+  const icon192     = makeIcon(192);
+  const icon512     = makeIcon(512);
+  const maskable512 = makeMaskableIcon(512);
 
   const manifest = {
     name: "Clarity · Daily Journal",
@@ -78,9 +100,9 @@
     theme_color: "#1b1915",
     orientation: "portrait",
     icons: [
-      { src: icon192, sizes: "192x192", type: "image/png", purpose: "any" },
-      { src: icon512, sizes: "512x512", type: "image/png", purpose: "any" },
-      { src: icon512, sizes: "512x512", type: "image/png", purpose: "maskable" }
+      { src: icon192,     sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: icon512,     sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: maskable512, sizes: "512x512", type: "image/png", purpose: "maskable" }
     ]
   };
 
