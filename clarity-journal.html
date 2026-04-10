@@ -425,6 +425,27 @@ function App() {
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [showBanner, setShowBanner] = useState(false);
 
+  const exportCSV = () => {
+    const header = ['Date','Mood Value','Mood Label','Tags','Distortions','Notes','Saved At'];
+    const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const rows = Object.keys(entries).sort().map(key => {
+      const e = entries[key];
+      const mood = MOODS.find(m => m.value === e.mood);
+      const tagLabels = e.tags.map(id => TAGS.find(t => t.id === id)?.label || id).join('; ');
+      const distLabels = e.distortions.map(id => DISTORTIONS.find(d => d.id === id)?.label || id).join('; ');
+      return [e.date, e.mood ?? '', mood?.label ?? '', tagLabels, distLabels, e.comment, e.savedAt ?? '']
+        .map(escape).join(',');
+    });
+    const csv = [header.map(escape).join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `clarity-journal-${toKey(new Date())}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Load from localStorage
   useEffect(() => {
     try {
@@ -526,9 +547,16 @@ function App() {
               ← All entries
             </button>
           ) : (
-            <button className="hdr-btn" onClick={() => { setPickerVal(toKey(todayObj())); setShowPicker(true); }}>
-              📅 Past day
-            </button>
+            <>
+              {Object.keys(entries).length > 0 && (
+                <button className="hdr-btn" onClick={exportCSV} style={{marginRight:6}}>
+                  ↓ CSV
+                </button>
+              )}
+              <button className="hdr-btn" onClick={() => { setPickerVal(toKey(todayObj())); setShowPicker(true); }}>
+                📅 Past day
+              </button>
+            </>
           )}
         </header>
 
