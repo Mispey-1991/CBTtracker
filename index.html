@@ -109,7 +109,7 @@ if ('serviceWorker' in navigator) {
 
 <script type="text/babel" data-presets="react">
 
-const { useState, useEffect, useCallback } = React;
+const { useState, useEffect, useCallback, useRef } = React;
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 
@@ -139,16 +139,26 @@ const TAGS = [
 ];
 
 const DISTORTIONS = [
-  { id:"catastrophizing",    label:"Catastrophizing",        desc:"Expecting the worst" },
-  { id:"allOrNothing",       label:"All-or-Nothing",         desc:"No middle ground" },
-  { id:"mindReading",        label:"Mind Reading",           desc:"Assuming others' thoughts" },
-  { id:"overgeneralization", label:"Overgeneralization",     desc:"Always / never thinking" },
-  { id:"personalization",    label:"Personalization",        desc:"Taking undue blame" },
-  { id:"filtering",          label:"Mental Filter",          desc:"Fixating on negatives" },
-  { id:"shouldStatements",   label:"Should Statements",      desc:"Rigid internal rules" },
-  { id:"emotionalReasoning", label:"Emotional Reasoning",    desc:"Feelings as facts" },
-  { id:"jumping",            label:"Jumping to Conclusions", desc:"Conclusions without evidence" },
-  { id:"magnification",      label:"Magnification",          desc:"Blowing things out of proportion" },
+  { id:"catastrophizing",    label:"Catastrophizing",        desc:"Expecting the worst",
+    detail:"You fast-forward to the worst possible outcome and treat it as likely. CBT asks you to reality-test the probability chain. What's the actual likelihood of the worst case? What's more likely? What would you tell a friend who had this same thought? The goal isn't toxic positivity — it's accurate probability. \"This could go badly\" is honest. \"This will definitely ruin everything\" is a story you're telling yourself." },
+  { id:"allOrNothing",       label:"All-or-Nothing",         desc:"No middle ground",
+    detail:"Extremes with no middle ground — perfect or failure, always or never. CBT pushes you to find the grey. Rate things on a scale instead of a binary. If 100% is perfect and 0% is total failure, where does this actually land? Usually somewhere in the 60–75% range, which is just... normal human performance. The intervention is deliberately introducing gradations into your language and evaluation." },
+  { id:"mindReading",        label:"Mind Reading",           desc:"Assuming others' thoughts",
+    detail:"Assuming you know what others think, usually negatively, without checking. CBT's move here is behavioural — go get actual data. Ask the person. Check your assumption against evidence. And when you can't, CBT asks you to list alternative explanations for their behaviour. Your friend was quiet at dinner — they could be tired, stressed, distracted, or just introverted that night. Your assumption is one of many possibilities, not the truth." },
+  { id:"overgeneralization", label:"Overgeneralization",     desc:"Always / never thinking",
+    detail:"One event becomes a universal law. CBT challenges the language directly. When you find yourself saying always or never, you're asked to find the exception — because there almost always is one. \"I always mess this up\" gets examined: every single time? Really? Finding even one counter-example breaks the generalization. Keeping a log of evidence for and against the belief over time is a common tool here." },
+  { id:"personalization",    label:"Personalization",        desc:"Taking undue blame",
+    detail:"Assigning yourself as the cause of things outside your control. CBT uses what's called a responsibility pie. You list every factor that contributed to the outcome, assign each a rough percentage, and add yourself last. Usually you find your actual share is smaller than it felt. It also asks: what would it mean if you weren't responsible? Sometimes personalization is a way of feeling in control — if it's your fault, you could have prevented it, which is less scary than randomness." },
+  { id:"filtering",          label:"Mental Filter",          desc:"Fixating on negatives",
+    detail:"Fixating on one negative while ignoring everything else. CBT asks you to deliberately record the full picture. Not to dismiss the negative, but to add back what you filtered out. A thought record for this one looks like: what are all the facts of this situation, not just the ones that support the negative view? It also asks why that one piece of criticism stuck — sometimes it hooks onto a deeper core belief worth examining." },
+  { id:"shouldStatements",   label:"Should Statements",      desc:"Rigid internal rules",
+    detail:"Rigid internal rules creating guilt, shame, or resentment. CBT asks you to audit the rule itself. Where did it come from? Is it realistic? Would you apply it to someone you care about? The reframe is usually shifting \"should\" to \"it would be helpful if\" or \"I'd prefer if\" — language that acknowledges the preference without the moral weight. It also surfaces whose rule it actually is. A lot of shoulds turn out to belong to a parent, a culture, or a past version of circumstances that no longer apply." },
+  { id:"emotionalReasoning", label:"Emotional Reasoning",    desc:"Feelings as facts",
+    detail:"Feelings as proof of reality. CBT draws a hard line here: emotions are data about your internal state, not evidence about external reality. The technique is to explicitly separate the feeling from the fact. \"I feel like a burden\" goes on one side. \"Evidence that I am actually a burden\" goes on the other. Usually the evidence side is thin. The feeling is real — CBT never dismisses that — but it's treated as a symptom to understand, not a truth to accept." },
+  { id:"jumping",            label:"Jumping to Conclusions", desc:"Conclusions without evidence",
+    detail:"Firm conclusions without evidence. CBT asks: what would I need to actually know before I could draw this conclusion? It slows the process down and exposes the gap between what you observed and what you decided it meant. Then it asks for alternative interpretations — not more optimistic ones necessarily, just other plausible explanations for the same facts. The goal is to hold the conclusion loosely until there's real evidence." },
+  { id:"magnification",      label:"Magnification",          desc:"Blowing things out of proportion",
+    detail:"Inflating the size or significance of something. CBT uses a technique called decatastrophizing — putting the event on a scale of 0 to 100 where 100 is the worst thing you can imagine. Most things, when placed honestly on that scale, land much lower than they felt. It also uses a time perspective question: how much will this matter in a week? A month? A year? This isn't dismissive — it's a genuine recalibration of proportion that the emotion was distorting." },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -360,6 +370,34 @@ const STYLE = `
 .dist-btn:active{transform:scale(0.97)}
 .dist-btn.sel{border-color:var(--sage);background:var(--sage-light)}
 .dist-btn.sel .dl{color:var(--sage)}
+.dist-btn{user-select:none;-webkit-user-select:none}
+
+/* Distortion detail overlay */
+.dist-detail-modal{
+  background:var(--paper);border-radius:20px 20px 0 0;
+  padding:20px 22px calc(32px + var(--safe-bottom));
+  width:100%;max-width:520px;
+  box-shadow:0 -12px 48px rgba(27,25,21,.2);
+  max-height:78vh;overflow-y:auto;
+}
+.dist-detail-tag{
+  font-size:10px;letter-spacing:2.5px;text-transform:uppercase;
+  color:var(--sage);font-weight:500;margin-bottom:6px;
+}
+.dist-detail-title{
+  font-family:'Lora',serif;font-size:20px;font-weight:600;
+  color:var(--ink);margin-bottom:16px;
+}
+.dist-detail-body{
+  font-size:14px;line-height:1.8;color:var(--ink-mid);font-weight:300;
+}
+.dist-detail-close{
+  display:block;width:100%;margin-top:22px;
+  background:var(--cream);border:1px solid var(--border);border-radius:11px;
+  padding:13px;font-family:'DM Sans',sans-serif;font-size:15px;
+  color:var(--ink-mid);cursor:pointer;-webkit-tap-highlight-color:transparent;
+}
+.dist-detail-close:active{opacity:.7}
 
 /* Comment */
 .comment{
@@ -424,6 +462,17 @@ function App() {
   const [saved,      setSaved]      = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [showBanner, setShowBanner] = useState(false);
+  const [distDetail, setDistDetail] = useState(null);
+  const lpTimer = useRef(null);
+  const lpSuppressClick = useRef(false);
+
+  const lpStart = (id) => {
+    lpTimer.current = setTimeout(() => {
+      lpSuppressClick.current = true;
+      setDistDetail(id);
+    }, 500);
+  };
+  const lpCancel = () => clearTimeout(lpTimer.current);
 
   const exportCSV = () => {
     const header = ['Date','Mood Value','Mood Label','Tags','Distortions','Notes','Saved At'];
@@ -690,12 +739,21 @@ function App() {
 
               {/* Distortions */}
               <div className="block">
-                <div className="block-label">Any thinking traps today?</div>
+                <div className="block-label">Any thinking traps today? · Hold for detail</div>
                 <div className="dist-grid">
                   {DISTORTIONS.map(d => (
                     <button key={d.id}
                       className={`dist-btn${form.distortions.includes(d.id) ? ' sel' : ''}`}
-                      onClick={() => toggle('distortions', d.id)}>
+                      onMouseDown={() => lpStart(d.id)}
+                      onMouseUp={lpCancel}
+                      onMouseLeave={lpCancel}
+                      onTouchStart={() => lpStart(d.id)}
+                      onTouchEnd={lpCancel}
+                      onTouchMove={lpCancel}
+                      onClick={() => {
+                        if (lpSuppressClick.current) { lpSuppressClick.current = false; return; }
+                        toggle('distortions', d.id);
+                      }}>
                       <div className="dl">{d.label}</div>
                       <div className="dd">{d.desc}</div>
                     </button>
@@ -716,6 +774,22 @@ function App() {
           )}
 
         </div>{/* end scroll-body */}
+
+        {/* Distortion detail overlay */}
+        {distDetail && (() => {
+          const d = DISTORTIONS.find(x => x.id === distDetail);
+          return (
+            <div className="overlay" onClick={() => setDistDetail(null)}>
+              <div className="dist-detail-modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-handle" />
+                <div className="dist-detail-tag">Thinking trap</div>
+                <div className="dist-detail-title">{d.label}</div>
+                <div className="dist-detail-body">{d.detail}</div>
+                <button className="dist-detail-close" onClick={() => setDistDetail(null)}>Done</button>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Save bar (only in entry view) */}
         {activeKey && form && (
