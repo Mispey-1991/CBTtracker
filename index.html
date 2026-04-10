@@ -541,13 +541,16 @@ const STYLE = `
 .pattern-text{font-size:13px;color:var(--ink-mid);font-weight:300;line-height:1.65}
 .pattern-text strong{font-weight:500;color:var(--ink)}
 .btn-export{
-  display:block;width:100%;margin-top:4px;
+  display:block;width:100%;margin-top:8px;
   background:var(--cream);border:1px solid var(--border);border-radius:11px;
   padding:13px;font-family:'DM Sans',sans-serif;font-size:15px;
   color:var(--ink-mid);cursor:pointer;-webkit-tap-highlight-color:transparent;
   text-align:center;
 }
 .btn-export:active{opacity:.7}
+.import-stats{background:var(--cream);border-radius:10px;padding:12px 14px;margin-bottom:14px}
+.import-stat{font-size:13px;color:var(--ink-mid);font-weight:300;line-height:1.6}
+.import-stat strong{font-weight:500;color:var(--ink)}
 /* Reminder */
 .reminder-nudge{
   background:var(--paper);border:1px dashed var(--border);border-radius:14px;
@@ -576,6 +579,53 @@ const STYLE = `
 }
 .btn-reminder-sm:active{opacity:.7}
 `;
+
+// ── CSV import helpers ────────────────────────────────────────────────────────
+
+function parseCSV(text) {
+  const rows = [];
+  let i = 0, n = text.length;
+  while (i < n) {
+    const row = [];
+    while (i < n) {
+      let field = '';
+      if (text[i] === '"') {
+        i++;
+        while (i < n) {
+          if (text[i] === '"' && text[i+1] === '"') { field += '"'; i += 2; }
+          else if (text[i] === '"') { i++; break; }
+          else { field += text[i++]; }
+        }
+      } else {
+        while (i < n && text[i] !== ',' && text[i] !== '\r' && text[i] !== '\n') field += text[i++];
+      }
+      row.push(field);
+      if (i < n && text[i] === ',') { i++; } else { if (text[i]==='\r') i++; if (text[i]==='\n') i++; break; }
+    }
+    if (row.some(f => f.length > 0)) rows.push(row);
+  }
+  return rows;
+}
+
+function importFromCSV(text, existing) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) return null;
+  const imported = {};
+  for (const row of rows.slice(1)) {
+    const [date, moodVal, , tagsStr, distStr, notes, savedAt] = row;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const mood = parseInt(moodVal, 10);
+    const tags = tagsStr ? tagsStr.split(';').map(s=>s.trim())
+      .map(l => TAGS.find(t => t.label.toLowerCase()===l.toLowerCase())?.id).filter(Boolean) : [];
+    const distortions = distStr ? distStr.split(';').map(s=>s.trim())
+      .map(l => DISTORTIONS.find(d => d.label.toLowerCase()===l.toLowerCase())?.id).filter(Boolean) : [];
+    imported[date] = { date, mood:[1,2,3,4,5].includes(mood)?mood:null, tags, distortions,
+      comment: notes||'', savedAt: savedAt||new Date().toISOString() };
+  }
+  const count = Object.keys(imported).length;
+  const newCount = Object.keys(imported).filter(k => !existing[k]).length;
+  return { entries: imported, count, newCount, updateCount: count - newCount };
+}
 
 // ── Insights helpers & components ────────────────────────────────────────────
 
@@ -665,7 +715,7 @@ function DayOfWeekChart({ data }) {
   );
 }
 
-function InsightsView({ entries, onExport }) {
+function InsightsView({ entries, onExport, onImport }) {
   const all = Object.values(entries).filter(e => e.mood != null).sort((a,b) => a.date.localeCompare(b.date));
 
   if (!all.length) return (
@@ -760,6 +810,7 @@ function InsightsView({ entries, onExport }) {
         </div>
       )}
 
+      <button className="btn-export" onClick={onImport}>↑ Import CSV</button>
       <button className="btn-export" onClick={onExport}>↓ Export all data as CSV</button>
     </div>
   );
@@ -782,6 +833,8 @@ function App() {
   const [reminderTime, setReminderTime] = useState(null); // 'HH:MM'
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [pickerTime, setPickerTime]     = useState('20:00');
+  const [importPreview, setImportPreview] = useState(null);
+  const fileInputRef = useRef(null);
   const lpTimer = useRef(null);
   const lpSuppressClick = useRef(false);
 
@@ -812,6 +865,25 @@ function App() {
       setReminderTime(null);
     }
     setShowTimePicker(false);
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const result = importFromCSV(ev.target.result, entries);
+      if (!result || result.count === 0) { alert('No valid entries found in this CSV.'); return; }
+      setImportPreview(result);
+    };
+    reader.readAsText(file);
+  };
+
+  const confirmImport = () => {
+    if (!importPreview) return;
+    persist({ ...entries, ...importPreview.entries });
+    setImportPreview(null);
   };
 
   const lpStart = (id) => {
@@ -984,6 +1056,25 @@ function App() {
           </div>
         )}
 
+        <input type="file" accept=".csv" ref={fileInputRef} style={{display:'none'}} onChange={handleFileSelect}/>
+
+        {importPreview && (
+          <div className="overlay" onClick={() => setImportPreview(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-handle"/>
+              <div className="modal-title">Import {importPreview.count} {importPreview.count===1?'entry':'entries'}</div>
+              <div className="import-stats">
+                {importPreview.newCount > 0 && <div className="import-stat"><strong>{importPreview.newCount}</strong> new {importPreview.newCount===1?'entry':'entries'} will be added</div>}
+                {importPreview.updateCount > 0 && <div className="import-stat"><strong>{importPreview.updateCount}</strong> existing {importPreview.updateCount===1?'entry':'entries'} will be overwritten</div>}
+              </div>
+              <div className="modal-btns">
+                <button className="btn-cancel" onClick={() => setImportPreview(null)}>Cancel</button>
+                <button className="btn-go" onClick={confirmImport}>Import →</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showTimePicker && (
           <div className="overlay" onClick={() => setShowTimePicker(false)}>
             <div className="modal" onClick={e => e.stopPropagation()}>
@@ -1008,7 +1099,7 @@ function App() {
 
           {/* ── Insights ── */}
           {!activeKey && showInsights && (
-            <InsightsView entries={entries} onExport={exportCSV}/>
+            <InsightsView entries={entries} onExport={exportCSV} onImport={() => fileInputRef.current.click()}/>
           )}
 
           {/* ── Home ── */}
