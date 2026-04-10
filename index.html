@@ -449,7 +449,229 @@ const STYLE = `
   background:none;border:none;color:rgba(244,239,230,.4);font-size:18px;
   cursor:pointer;padding:4px;-webkit-tap-highlight-color:transparent;flex-shrink:0;
 }
+
+/* Insights */
+.insights{max-width:640px;margin:0 auto;padding:22px 18px calc(22px + var(--safe-bottom))}
+.stat-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:26px}
+.stat-card{background:var(--paper);border:1px solid var(--border);border-radius:14px;padding:14px 12px;text-align:center}
+.stat-value{font-family:'Lora',serif;font-size:26px;font-weight:600;color:var(--ink);line-height:1}
+.stat-label{font-size:10px;color:var(--ink-soft);font-weight:300;margin-top:5px;letter-spacing:.3px}
+.ins-section{margin-bottom:26px}
+.ins-title{font-size:10px;letter-spacing:2.5px;text-transform:uppercase;color:var(--ink-soft);font-weight:500;margin-bottom:12px}
+.freq-row{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+.freq-label{font-size:13px;color:var(--ink-mid);width:140px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.freq-track{flex:1;height:7px;background:var(--cream);border-radius:4px;overflow:hidden;border:1px solid var(--border)}
+.freq-fill{height:100%;border-radius:4px}
+.freq-count{font-size:12px;color:var(--ink-soft);width:22px;text-align:right;flex-shrink:0}
+.chart-wrap{margin-bottom:26px}
+.chart-title{font-size:10px;letter-spacing:2.5px;text-transform:uppercase;color:var(--ink-soft);font-weight:500;margin-bottom:10px}
+.chart-dates{display:flex;justify-content:space-between;font-size:10px;color:var(--ink-faint);margin-top:3px;padding-left:20px}
+.dow-wrap{display:flex;align-items:flex-end;gap:5px;height:90px;padding-bottom:0}
+.dow-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px}
+.dow-bars{flex:1;width:100%;display:flex;align-items:flex-end;background:var(--cream);border:1px solid var(--border);border-radius:6px 6px 0 0;overflow:hidden}
+.dow-bar{width:100%;background:var(--rust);opacity:.7;min-height:3px}
+.dow-day{font-size:9px;color:var(--ink-soft);margin-top:4px}
+.dow-avg{font-size:9px;color:var(--ink-faint)}
+.pattern-card{background:var(--paper);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:8px}
+.pattern-text{font-size:13px;color:var(--ink-mid);font-weight:300;line-height:1.65}
+.pattern-text strong{font-weight:500;color:var(--ink)}
+.btn-export{
+  display:block;width:100%;margin-top:4px;
+  background:var(--cream);border:1px solid var(--border);border-radius:11px;
+  padding:13px;font-family:'DM Sans',sans-serif;font-size:15px;
+  color:var(--ink-mid);cursor:pointer;-webkit-tap-highlight-color:transparent;
+  text-align:center;
+}
+.btn-export:active{opacity:.7}
 `;
+
+// ── Insights helpers & components ────────────────────────────────────────────
+
+function computeStreak(sorted) {
+  if (!sorted.length) return 0;
+  const keys = sorted.map(e => e.date).reverse();
+  const tk = toKey(todayObj());
+  const yk = (() => { const d = new Date(todayObj()); d.setDate(d.getDate()-1); return toKey(d); })();
+  if (keys[0] !== tk && keys[0] !== yk) return 0;
+  let s = 1;
+  for (let i = 1; i < keys.length; i++) {
+    const prev = parseKey(keys[i-1]); prev.setDate(prev.getDate()-1);
+    if (toKey(prev) === keys[i]) s++; else break;
+  }
+  return s;
+}
+
+function FreqBar({ label, count, max, color }) {
+  return (
+    <div className="freq-row">
+      <div className="freq-label">{label}</div>
+      <div className="freq-track">
+        <div className="freq-fill" style={{ width: max ? `${(count/max)*100}%` : '0%', background: color }} />
+      </div>
+      <div className="freq-count">{count}</div>
+    </div>
+  );
+}
+
+function MoodLine({ entries }) {
+  if (entries.length < 2) return null;
+  const W=300, H=80, PL=20, PR=8, PT=8, PB=4;
+  const iW=W-PL-PR, iH=H-PT-PB;
+  const n=entries.length;
+  const xOf = i => PL + (i/(n-1))*iW;
+  const yOf = v => PT + iH - ((v-1)/4)*iH;
+  const pts = entries.map((e,i) => [xOf(i), yOf(e.mood)]);
+  const line = pts.map(([x,y],i) => `${i?'L':'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const area = `${line}L${pts[pts.length-1][0].toFixed(1)},${(PT+iH).toFixed(1)}L${PL},${(PT+iH).toFixed(1)}Z`;
+  return (
+    <div className="chart-wrap">
+      <div className="chart-title">Mood over time</div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto',display:'block'}}>
+        <defs>
+          <linearGradient id="mg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#a0432a" stopOpacity="0.2"/>
+            <stop offset="100%" stopColor="#a0432a" stopOpacity="0.01"/>
+          </linearGradient>
+        </defs>
+        {[1,2,3,4,5].map(v => (
+          <g key={v}>
+            <line x1={PL} y1={yOf(v)} x2={PL+iW} y2={yOf(v)} stroke="#e5dfd6" strokeWidth="0.5"/>
+            <text x={PL-4} y={yOf(v)+3} fontSize="7" textAnchor="end" fill="#c5bfb6">{v}</text>
+          </g>
+        ))}
+        <path d={area} fill="url(#mg)"/>
+        <path d={line} fill="none" stroke="#a0432a" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
+        {pts.map(([x,y],i) => <circle key={i} cx={x} cy={y} r="2.2" fill="#a0432a"/>)}
+      </svg>
+      <div className="chart-dates">
+        <span>{friendlyDate(entries[0].date)}</span>
+        <span>{friendlyDate(entries[entries.length-1].date)}</span>
+      </div>
+    </div>
+  );
+}
+
+function DayOfWeekChart({ data }) {
+  const withData = data.filter(d => d.avg != null);
+  if (!withData.length) return null;
+  const maxAvg = Math.max(...withData.map(d => d.avg));
+  return (
+    <div className="chart-wrap">
+      <div className="chart-title">Average mood by day of week</div>
+      <div className="dow-wrap">
+        {data.map(d => (
+          <div key={d.dow} className="dow-col">
+            <div className="dow-bars">
+              {d.avg != null && <div className="dow-bar" style={{height:`${(d.avg/maxAvg)*100}%`}}/>}
+            </div>
+            <div className="dow-day">{d.label}</div>
+            {d.avg != null && <div className="dow-avg">{d.avg.toFixed(1)}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InsightsView({ entries, onExport }) {
+  const all = Object.values(entries).filter(e => e.mood != null).sort((a,b) => a.date.localeCompare(b.date));
+
+  if (!all.length) return (
+    <div className="insights">
+      <div className="empty">
+        <div className="empty-icon">📊</div>
+        <div className="empty-text">Log a few days to see your patterns here.</div>
+      </div>
+    </div>
+  );
+
+  const avgMood = all.reduce((s,e) => s+e.mood, 0) / all.length;
+  const streak  = computeStreak(all);
+  const avgEmoji = MOODS.reduce((p,m) => Math.abs(m.value-avgMood) < Math.abs(p.value-avgMood) ? m : p).emoji;
+
+  const moodDist = [...MOODS].reverse().map(m => ({ m, count: all.filter(e=>e.mood===m.value).length }));
+  const tagFreq  = TAGS.map(t => ({ t, count: all.filter(e=>e.tags.includes(t.id)).length })).filter(x=>x.count>0).sort((a,b)=>b.count-a.count);
+  const distFreq = DISTORTIONS.map(d => ({ d, count: all.filter(e=>e.distortions.includes(d.id)).length })).filter(x=>x.count>0).sort((a,b)=>b.count-a.count);
+
+  const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const dowData = DOW.map((label, dow) => {
+    const es = all.filter(e => parseKey(e.date).getDay()===dow);
+    return { dow, label, avg: es.length ? es.reduce((s,e)=>s+e.mood,0)/es.length : null, count: es.length };
+  });
+
+  const patterns = [];
+  const bestDow = dowData.filter(d=>d.count>=2).sort((a,b)=>b.avg-a.avg)[0];
+  if (bestDow) patterns.push(<>Your mood tends to be highest on <strong>{['Sundays','Mondays','Tuesdays','Wednesdays','Thursdays','Fridays','Saturdays'][bestDow.dow]}</strong> (avg {bestDow.avg.toFixed(1)}).</>);
+  if (distFreq[0]) patterns.push(<><strong>{distFreq[0].d.label}</strong> is your most frequent thinking trap ({distFreq[0].count} {distFreq[0].count===1?'time':'times'}).</>);
+  const lowDays = all.filter(e=>e.mood<=2);
+  if (lowDays.length>=2) {
+    const ltf = TAGS.map(t=>({t,c:lowDays.filter(e=>e.tags.includes(t.id)).length})).filter(x=>x.c>0).sort((a,b)=>b.c-a.c);
+    if (ltf[0]) patterns.push(<><strong>{ltf[0].t.label}</strong> appears on {Math.round((ltf[0].c/lowDays.length)*100)}% of your difficult days.</>);
+  }
+  const highDays = all.filter(e=>e.mood>=4);
+  if (highDays.length>=2) {
+    const htf = TAGS.map(t=>({t,c:highDays.filter(e=>e.tags.includes(t.id)).length})).filter(x=>x.c>0).sort((a,b)=>b.c-a.c);
+    if (htf[0]) patterns.push(<><strong>{htf[0].t.label}</strong> comes up on {Math.round((htf[0].c/highDays.length)*100)}% of your good days.</>);
+  }
+
+  return (
+    <div className="insights">
+      <div className="stat-cards">
+        <div className="stat-card">
+          <div className="stat-value">{all.length}</div>
+          <div className="stat-label">Days logged</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{avgEmoji}</div>
+          <div className="stat-label">Avg {avgMood.toFixed(1)}</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{streak}</div>
+          <div className="stat-label">{streak===1?'Day':'Days'} streak</div>
+        </div>
+      </div>
+
+      <MoodLine entries={all.slice(-60)}/>
+      <DayOfWeekChart data={dowData}/>
+
+      <div className="ins-section">
+        <div className="ins-title">Mood breakdown</div>
+        {moodDist.map(({m,count}) => (
+          <FreqBar key={m.value} label={`${m.emoji} ${m.label}`} count={count} max={Math.max(...moodDist.map(x=>x.count),1)} color={m.color}/>
+        ))}
+      </div>
+
+      {tagFreq.length>0 && (
+        <div className="ins-section">
+          <div className="ins-title">What shaped your days</div>
+          {tagFreq.slice(0,8).map(({t,count}) => (
+            <FreqBar key={t.id} label={`${t.icon} ${t.label}`} count={count} max={tagFreq[0].count} color="var(--rust)"/>
+          ))}
+        </div>
+      )}
+
+      {distFreq.length>0 && (
+        <div className="ins-section">
+          <div className="ins-title">Thinking traps</div>
+          {distFreq.map(({d,count}) => (
+            <FreqBar key={d.id} label={d.label} count={count} max={distFreq[0].count} color="var(--sage)"/>
+          ))}
+        </div>
+      )}
+
+      {patterns.length>0 && (
+        <div className="ins-section">
+          <div className="ins-title">Patterns</div>
+          {patterns.map((p,i) => (
+            <div key={i} className="pattern-card"><div className="pattern-text">{p}</div></div>
+          ))}
+        </div>
+      )}
+
+      <button className="btn-export" onClick={onExport}>↓ Export all data as CSV</button>
+    </div>
+  );
+}
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
@@ -462,6 +684,7 @@ function App() {
   const [saved,      setSaved]      = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [showBanner, setShowBanner] = useState(false);
+  const [showInsights, setShowInsights] = useState(false);
   const [distDetail, setDistDetail] = useState(null);
   const lpTimer = useRef(null);
   const lpSuppressClick = useRef(false);
@@ -595,11 +818,15 @@ function App() {
             <button className="hdr-btn" onClick={() => { setActiveKey(null); setForm(null); }}>
               ← All entries
             </button>
+          ) : showInsights ? (
+            <button className="hdr-btn" onClick={() => setShowInsights(false)}>
+              ← Back
+            </button>
           ) : (
             <>
               {Object.keys(entries).length > 0 && (
-                <button className="hdr-btn" onClick={exportCSV} style={{marginRight:6}}>
-                  ↓ CSV
+                <button className="hdr-btn" onClick={() => setShowInsights(true)} style={{marginRight:6}}>
+                  📊 Trends
                 </button>
               )}
               <button className="hdr-btn" onClick={() => { setPickerVal(toKey(todayObj())); setShowPicker(true); }}>
@@ -630,8 +857,13 @@ function App() {
 
         <div className="scroll-body">
 
+          {/* ── Insights ── */}
+          {!activeKey && showInsights && (
+            <InsightsView entries={entries} onExport={exportCSV}/>
+          )}
+
           {/* ── Home ── */}
-          {!activeKey && (
+          {!activeKey && !showInsights && (
             <div className="home">
               <div className="today-card" onClick={() => openEntry(todayKey)}>
                 <div className="tc-label">{todayMood ? "Today's entry" : "Start today's entry"}</div>
