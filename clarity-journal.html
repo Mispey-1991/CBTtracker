@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Clarity · Daily Journal</title>
+
+  <!-- PWA / Android -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Clarity" />
+  <meta name="theme-color" content="#1b1915" />
+  <meta name="description" content="A CBT-guided daily journal" />
+
+  <!-- Manifest injected via JS below so it works as a single file -->
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap');
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html,body,#root{height:100%;width:100%}
+    body{font-family:'DM Sans',sans-serif;background:#f4efe6;color:#1b1915;
+      -webkit-font-smoothing:antialiased;overscroll-behavior:none}
+    #root{height:100%}
+    /* Prevent pull-to-refresh interfering */
+    body{overflow-y:scroll}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+// ── Inline web app manifest ──────────────────────────────────────────────────
+(function(){
+  // Build SVG icon as a data URI
+  const svg512 = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="90" fill="#1b1915"/>
+    <text x="256" y="358" font-family="Georgia,serif" font-size="300" font-weight="600"
+      fill="#f4efe6" text-anchor="middle">C</text>
+    <circle cx="380" cy="148" r="28" fill="#a0432a"/>
+  </svg>`;
+  const iconUrl = 'data:image/svg+xml;base64,' + btoa(svg512);
+
+  const manifest = {
+    name: "Clarity · Daily Journal",
+    short_name: "Clarity",
+    description: "A CBT-guided daily journal",
+    start_url: "./",
+    display: "standalone",
+    background_color: "#f4efe6",
+    theme_color: "#1b1915",
+    orientation: "portrait",
+    icons: [
+      { src: iconUrl, sizes: "192x192", type: "image/svg+xml", purpose: "any maskable" },
+      { src: iconUrl, sizes: "512x512", type: "image/svg+xml", purpose: "any maskable" }
+    ]
+  };
+
+  const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const link = document.createElement('link');
+  link.rel   = 'manifest';
+  link.href  = url;
+  document.head.appendChild(link);
+
+  // Apple touch icon
+  const appleLink = document.createElement('link');
+  appleLink.rel  = 'apple-touch-icon';
+  appleLink.href = iconUrl;
+  document.head.appendChild(appleLink);
+})();
+
+// ── Service Worker (minimal — enables install prompt) ─────────────────────────
+if ('serviceWorker' in navigator) {
+  const swCode = `
+    const CACHE = 'clarity-v1';
+    self.addEventListener('install', e => {
+      self.skipWaiting();
+    });
+    self.addEventListener('activate', e => {
+      e.waitUntil(clients.claim());
+    });
+    self.addEventListener('fetch', e => {
+      // Cache-first for same-origin, network for everything else
+      if (e.request.url.startsWith(self.location.origin)) {
+        e.respondWith(
+          caches.open(CACHE).then(cache =>
+            cache.match(e.request).then(cached =>
+              cached || fetch(e.request).then(resp => {
+                cache.put(e.request, resp.clone());
+                return resp;
+              })
+            )
+          )
+        );
+      }
+    });
+  `;
+  const swBlob = new Blob([swCode], { type: 'application/javascript' });
+  const swUrl  = URL.createObjectURL(swBlob);
+  navigator.serviceWorker.register(swUrl).catch(() => {});
+}
+</script>
+
+<!-- React + ReactDOM + Babel (standalone, no build step needed) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+
+const { useState, useEffect, useCallback } = React;
+
+// ── Data ─────────────────────────────────────────────────────────────────────
+
+const STORAGE_KEY = 'clarity-journal-v1';
+
+const MOODS = [
+  { value:1, label:"Unbearable", emoji:"😶‍🌫️", color:"#c0392b", bg:"#fdf0ef" },
+  { value:2, label:"Difficult",  emoji:"😔",    color:"#d35400", bg:"#fef5ec" },
+  { value:3, label:"Manageable", emoji:"😐",    color:"#c4922a", bg:"#fdf8ee" },
+  { value:4, label:"Steady",     emoji:"🙂",    color:"#2e86ab", bg:"#eef6fb" },
+  { value:5, label:"Thriving",   emoji:"😌",    color:"#27ae60", bg:"#edfaf3" },
+];
+
+const TAGS = [
+  { id:"work",         label:"Work",         icon:"💼" },
+  { id:"family",       label:"Family",       icon:"🏠" },
+  { id:"relationship", label:"Relationship", icon:"💛" },
+  { id:"social",       label:"Social",       icon:"👥" },
+  { id:"health",       label:"Health",       icon:"🩺" },
+  { id:"parenting",    label:"Parenting",    icon:"🍼" },
+  { id:"finances",     label:"Finances",     icon:"💰" },
+  { id:"busy",         label:"Busy",         icon:"⚡" },
+  { id:"rest",         label:"Rest Day",     icon:"☁️" },
+  { id:"exercise",     label:"Exercise",     icon:"🏃" },
+  { id:"sleep",        label:"Poor Sleep",   icon:"🌙" },
+  { id:"travel",       label:"Travel",       icon:"✈️" },
+];
+
+const DISTORTIONS = [
+  { id:"catastrophizing",    label:"Catastrophizing",        desc:"Expecting the worst" },
+  { id:"allOrNothing",       label:"All-or-Nothing",         desc:"No middle ground" },
+  { id:"mindReading",        label:"Mind Reading",           desc:"Assuming others' thoughts" },
+  { id:"overgeneralization", label:"Overgeneralization",     desc:"Always / never thinking" },
+  { id:"personalization",    label:"Personalization",        desc:"Taking undue blame" },
+  { id:"filtering",          label:"Mental Filter",          desc:"Fixating on negatives" },
+  { id:"shouldStatements",   label:"Should Statements",      desc:"Rigid internal rules" },
+  { id:"emotionalReasoning", label:"Emotional Reasoning",    desc:"Feelings as facts" },
+  { id:"jumping",            label:"Jumping to Conclusions", desc:"Conclusions without evidence" },
+  { id:"magnification",      label:"Magnification",          desc:"Blowing things out of proportion" },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const toKey    = d => d.toISOString().slice(0,10);
+const todayObj = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
+const parseKey = k => { const [y,m,d] = k.split('-').map(Number); return new Date(y,m-1,d); };
+
+const friendlyDate = key => {
+  const tk = toKey(todayObj());
+  if (key === tk) return 'Today';
+  const yObj = new Date(todayObj()); yObj.setDate(yObj.getDate()-1);
+  if (key === toKey(yObj)) return 'Yesterday';
+  return parseKey(key).toLocaleDateString('en-CA',{weekday:'short',month:'short',day:'numeric'});
+};
+
+const formatLong = key =>
+  parseKey(key).toLocaleDateString('en-CA',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+
+const blank = key => ({ date:key, mood:null, tags:[], distortions:[], comment:'', savedAt:null });
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const STYLE = `
+:root{
+  --cream:#f4efe6;--paper:#faf8f3;--white:#fff;
+  --ink:#1b1915;--ink-mid:#4e4841;--ink-soft:#8a8278;--ink-faint:#c5bfb6;
+  --rust:#a0432a;--sage:#4e7c6b;--sage-light:#d0e5de;
+  --gold:#b8831e;--border:#e5dfd6;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+.app{
+  min-height:100vh;
+  background:var(--cream);
+  background-image:
+    radial-gradient(ellipse at 5% 0%,rgba(160,67,42,.06) 0%,transparent 45%),
+    radial-gradient(ellipse at 95% 100%,rgba(78,124,107,.06) 0%,transparent 45%);
+  display:flex;flex-direction:column;
+}
+
+/* Header */
+.hdr{
+  background:var(--paper);border-bottom:1px solid var(--border);
+  padding:calc(14px + var(--safe-top)) 20px 14px;
+  display:flex;align-items:center;gap:9px;
+  position:sticky;top:0;z-index:50;
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  background:rgba(250,248,243,0.92);
+}
+.hdr-logo{font-family:'Lora',serif;font-size:18px;font-weight:600;letter-spacing:-0.2px}
+.hdr-dot{width:5px;height:5px;border-radius:50%;background:var(--rust);flex-shrink:0}
+.hdr-sub{font-size:12px;color:var(--ink-soft);font-weight:300}
+.hdr-spacer{flex:1}
+.hdr-btn{
+  background:var(--paper);border:1px solid var(--border);border-radius:9px;
+  padding:8px 13px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink-mid);
+  cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .15s;
+  white-space:nowrap;-webkit-tap-highlight-color:transparent;
+}
+.hdr-btn:active{background:var(--cream);transform:scale(0.97)}
+
+/* Scrollable content */
+.scroll-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+
+/* Home */
+.home{max-width:640px;margin:0 auto;padding:22px 18px calc(22px + var(--safe-bottom))}
+
+.today-card{
+  background:var(--ink);border-radius:20px;padding:24px 26px;color:var(--cream);
+  cursor:pointer;position:relative;overflow:hidden;margin-bottom:24px;
+  -webkit-tap-highlight-color:transparent;
+  transition:transform .18s,box-shadow .18s;
+  active-transform:scale(0.98);
+}
+.today-card:active{transform:scale(0.98)}
+.today-card::after{
+  content:'';position:absolute;top:-30px;right:-30px;width:150px;height:150px;
+  border-radius:50%;
+  background:radial-gradient(circle,rgba(184,131,30,.22) 0%,transparent 70%);
+  pointer-events:none;
+}
+.tc-label{font-size:10px;letter-spacing:2.5px;text-transform:uppercase;color:var(--gold);font-weight:500;margin-bottom:7px}
+.tc-weekday{font-family:'Lora',serif;font-size:22px;font-weight:600;line-height:1.2;margin-bottom:3px}
+.tc-datestr{font-size:12px;color:rgba(244,239,230,.5);font-weight:300;margin-bottom:16px}
+.tc-mood{display:flex;align-items:center;gap:9px}
+.tc-mood-emoji{font-size:18px}
+.tc-mood-text{font-size:13px;color:rgba(244,239,230,.7);font-weight:300}
+.tc-arrow{position:absolute;bottom:20px;right:22px;font-size:18px;opacity:.3}
+
+.sec-label{
+  font-size:10px;letter-spacing:2.5px;text-transform:uppercase;
+  color:var(--ink-soft);font-weight:500;margin-bottom:11px;
+}
+
+.timeline{display:flex;flex-direction:column;gap:7px}
+.tl-item{
+  background:var(--paper);border:1px solid var(--border);border-radius:14px;
+  padding:13px 16px;cursor:pointer;display:flex;align-items:center;gap:13px;
+  -webkit-tap-highlight-color:transparent;transition:all .12s;
+}
+.tl-item:active{transform:scale(0.98);background:var(--white)}
+.tl-badge{
+  width:38px;height:38px;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;
+}
+.tl-body{flex:1;min-width:0}
+.tl-date{font-size:11px;color:var(--ink-soft);font-weight:300;margin-bottom:2px}
+.tl-label{font-size:14px;font-weight:500;color:var(--ink);margin-bottom:3px}
+.tl-comment{font-size:12px;color:var(--ink-soft);font-weight:300;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.tl-tag{
+  font-size:10px;background:var(--cream);border:1px solid var(--border);
+  border-radius:20px;padding:2px 7px;color:var(--ink-mid);
+}
+.tl-arrow{color:var(--ink-faint);font-size:15px;flex-shrink:0}
+
+.empty{text-align:center;padding:40px 20px;color:var(--ink-soft)}
+.empty-icon{font-size:32px;margin-bottom:10px}
+.empty-text{font-size:14px;font-weight:300;line-height:1.6}
+
+/* Modal overlay */
+.overlay{
+  position:fixed;inset:0;background:rgba(27,25,21,.5);
+  display:flex;align-items:flex-end;justify-content:center;
+  z-index:200;padding:0;
+}
+.modal{
+  background:var(--paper);border-radius:20px 20px 0 0;
+  padding:20px 22px calc(24px + var(--safe-bottom));
+  width:100%;max-width:520px;
+  box-shadow:0 -12px 48px rgba(27,25,21,.2);
+}
+.modal-handle{width:36px;height:4px;border-radius:2px;background:var(--border);margin:0 auto 18px}
+.modal-title{font-family:'Lora',serif;font-size:18px;font-weight:600;margin-bottom:14px}
+.date-inp{
+  width:100%;background:var(--white);border:1.5px solid var(--border);border-radius:11px;
+  padding:12px 15px;font-family:'DM Sans',sans-serif;font-size:16px;color:var(--ink);
+  outline:none;margin-bottom:14px;transition:border-color .15s;
+}
+.date-inp:focus{border-color:var(--rust)}
+.modal-btns{display:flex;gap:8px}
+.btn-cancel{
+  flex:1;background:var(--cream);border:1px solid var(--border);border-radius:11px;
+  padding:13px;font-family:'DM Sans',sans-serif;font-size:15px;color:var(--ink-mid);
+  cursor:pointer;-webkit-tap-highlight-color:transparent;
+}
+.btn-cancel:active{opacity:.7}
+.btn-go{
+  flex:2;background:var(--ink);color:var(--cream);border:none;border-radius:11px;
+  padding:13px;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:500;
+  cursor:pointer;-webkit-tap-highlight-color:transparent;
+}
+.btn-go:active{background:var(--rust)}
+
+/* Entry */
+.entry-wrap{
+  max-width:640px;margin:0 auto;
+  padding:22px 18px calc(90px + var(--safe-bottom));
+}
+.entry-date-row{display:flex;align-items:baseline;gap:10px;margin-bottom:24px;flex-wrap:wrap}
+.entry-label{
+  font-size:10px;letter-spacing:2.5px;text-transform:uppercase;
+  color:var(--rust);font-weight:500;flex-shrink:0;
+}
+.entry-date{font-family:'Lora',serif;font-size:20px;font-weight:600;color:var(--ink);line-height:1.2}
+
+.block{margin-bottom:24px}
+.block-label{
+  font-size:10px;letter-spacing:2.5px;text-transform:uppercase;
+  color:var(--ink-soft);font-weight:500;margin-bottom:11px;
+}
+
+/* Mood */
+.mood-row{display:flex;gap:6px}
+.mood-btn{
+  flex:1;background:var(--paper);border:1.5px solid var(--border);border-radius:13px;
+  padding:11px 4px 10px;display:flex;flex-direction:column;align-items:center;gap:4px;
+  cursor:pointer;transition:all .12s;font-family:'DM Sans',sans-serif;
+  -webkit-tap-highlight-color:transparent;
+}
+.mood-btn .mn{font-size:15px;font-weight:600;color:var(--ink-faint);line-height:1}
+.mood-btn .me{font-size:18px;line-height:1}
+.mood-btn .ml{font-size:9px;color:var(--ink-soft);text-align:center;line-height:1.3;font-weight:400}
+.mood-btn:active{transform:scale(0.95)}
+.mood-btn.sel{border-width:2px}
+
+/* Tags */
+.tags-wrap{display:flex;flex-wrap:wrap;gap:7px}
+.tag-btn{
+  background:var(--paper);border:1.5px solid var(--border);border-radius:24px;
+  padding:8px 13px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink-mid);
+  cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap;
+  -webkit-tap-highlight-color:transparent;transition:all .12s;
+}
+.tag-btn:active{transform:scale(0.95)}
+.tag-btn.sel{background:var(--ink);border-color:var(--ink);color:var(--cream)}
+
+/* Distortions */
+.dist-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.dist-btn{
+  background:var(--paper);border:1.5px solid var(--border);border-radius:12px;
+  padding:11px 12px;text-align:left;cursor:pointer;font-family:'DM Sans',sans-serif;
+  -webkit-tap-highlight-color:transparent;transition:all .12s;
+}
+.dist-btn .dl{font-size:12px;font-weight:500;color:var(--ink);margin-bottom:2px}
+.dist-btn .dd{font-size:10px;color:var(--ink-soft);font-weight:300}
+.dist-btn:active{transform:scale(0.97)}
+.dist-btn.sel{border-color:var(--sage);background:var(--sage-light)}
+.dist-btn.sel .dl{color:var(--sage)}
+
+/* Comment */
+.comment{
+  width:100%;background:var(--paper);border:1.5px solid var(--border);border-radius:13px;
+  padding:14px 16px;font-family:'Lora',serif;font-size:15px;line-height:1.7;color:var(--ink);
+  resize:none;min-height:120px;outline:none;transition:border-color .15s;
+}
+.comment:focus{border-color:var(--rust)}
+.comment::placeholder{color:var(--ink-faint);font-style:italic}
+
+/* Save bar */
+.save-bar{
+  position:fixed;bottom:0;left:0;right:0;
+  background:rgba(250,248,243,0.96);
+  border-top:1px solid var(--border);
+  padding:12px 20px calc(12px + var(--safe-bottom));
+  display:flex;align-items:center;justify-content:space-between;
+  z-index:50;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+}
+.save-status{font-size:12px;color:var(--ink-soft);font-weight:300}
+.save-status.ok{color:var(--sage)}
+.btn-del{
+  background:none;border:none;color:var(--ink-faint);font-family:'DM Sans',sans-serif;
+  font-size:13px;cursor:pointer;padding:8px;-webkit-tap-highlight-color:transparent;
+}
+.btn-del:active{color:#c0392b}
+.save-right{display:flex;align-items:center;gap:12px}
+.btn-save{
+  background:var(--rust);color:#fff;border:none;border-radius:11px;
+  padding:12px 24px;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:500;
+  cursor:pointer;-webkit-tap-highlight-color:transparent;
+}
+.btn-save:active{background:#8a3520;transform:scale(0.97)}
+.btn-save:disabled{opacity:.35}
+
+/* Install banner */
+.install-banner{
+  background:var(--ink);color:var(--cream);padding:12px 18px;
+  display:flex;align-items:center;gap:12px;
+}
+.install-banner-text{flex:1;font-size:13px;font-weight:300;line-height:1.4}
+.install-banner-text strong{font-weight:500}
+.btn-install{
+  background:var(--rust);color:#fff;border:none;border-radius:8px;
+  padding:9px 14px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;
+  cursor:pointer;flex-shrink:0;white-space:nowrap;-webkit-tap-highlight-color:transparent;
+}
+.btn-dismiss{
+  background:none;border:none;color:rgba(244,239,230,.4);font-size:18px;
+  cursor:pointer;padding:4px;-webkit-tap-highlight-color:transparent;flex-shrink:0;
+}
+`;
+
+// ── App ───────────────────────────────────────────────────────────────────────
+
+function App() {
+  const [entries,    setEntries]    = useState({});
+  const [activeKey,  setActiveKey]  = useState(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const [pickerVal,  setPickerVal]  = useState(toKey(todayObj()));
+  const [form,       setForm]       = useState(null);
+  const [saved,      setSaved]      = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [showBanner, setShowBanner] = useState(false);
+
+  // Load from localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setEntries(JSON.parse(raw));
+    } catch {}
+  }, []);
+
+  // Capture install prompt
+  useEffect(() => {
+    const handler = e => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowBanner(true);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const persist = useCallback((updated) => {
+    setEntries(updated);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updated)); } catch {}
+  }, []);
+
+  const openEntry = (key) => {
+    setForm({ ...(entries[key] || blank(key)) });
+    setActiveKey(key);
+    setSaved(false);
+  };
+
+  const saveEntry = () => {
+    const updated = { ...entries, [form.date]: { ...form, savedAt: new Date().toISOString() } };
+    persist(updated);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  const deleteEntry = (key) => {
+    const updated = { ...entries };
+    delete updated[key];
+    persist(updated);
+    setActiveKey(null);
+    setForm(null);
+  };
+
+  const toggle = (field, id) => {
+    setForm(f => ({
+      ...f,
+      [field]: f[field].includes(id) ? f[field].filter(x => x !== id) : [...f[field], id],
+    }));
+    setSaved(false);
+  };
+
+  const handleInstall = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
+    setShowBanner(false);
+  };
+
+  const todayKey   = toKey(todayObj());
+  const todayEntry = entries[todayKey];
+  const todayMood  = todayEntry?.mood != null ? MOODS.find(m => m.value === todayEntry.mood) : null;
+  const sortedKeys = Object.keys(entries).sort((a,b) => b.localeCompare(a));
+
+  // Friendly day label for entry view
+  const dayLabel = activeKey => {
+    if (activeKey === todayKey) return 'Today';
+    const y = new Date(todayObj()); y.setDate(y.getDate()-1);
+    if (activeKey === toKey(y)) return 'Yesterday';
+    return 'Past entry';
+  };
+
+  return (
+    <>
+      <style>{STYLE}</style>
+      <div className="app">
+
+        {/* Install banner */}
+        {showBanner && (
+          <div className="install-banner">
+            <div className="install-banner-text">
+              <strong>Add Clarity to your home screen</strong> for quick access anytime.
+            </div>
+            <button className="btn-install" onClick={handleInstall}>Install</button>
+            <button className="btn-dismiss" onClick={() => setShowBanner(false)}>×</button>
+          </div>
+        )}
+
+        {/* Header */}
+        <header className="hdr">
+          <div className="hdr-logo">Clarity</div>
+          <div className="hdr-dot" />
+          <div className="hdr-sub">Daily Journal</div>
+          <div className="hdr-spacer" />
+          {activeKey ? (
+            <button className="hdr-btn" onClick={() => { setActiveKey(null); setForm(null); }}>
+              ← All entries
+            </button>
+          ) : (
+            <button className="hdr-btn" onClick={() => { setPickerVal(toKey(todayObj())); setShowPicker(true); }}>
+              📅 Past day
+            </button>
+          )}
+        </header>
+
+        {/* Date picker sheet */}
+        {showPicker && (
+          <div className="overlay" onClick={() => setShowPicker(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-handle" />
+              <div className="modal-title">Choose a date</div>
+              <input type="date" className="date-inp"
+                value={pickerVal} max={toKey(todayObj())}
+                onChange={e => setPickerVal(e.target.value)} />
+              <div className="modal-btns">
+                <button className="btn-cancel" onClick={() => setShowPicker(false)}>Cancel</button>
+                <button className="btn-go" onClick={() => { setShowPicker(false); openEntry(pickerVal); }}>
+                  Open →
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="scroll-body">
+
+          {/* ── Home ── */}
+          {!activeKey && (
+            <div className="home">
+              <div className="today-card" onClick={() => openEntry(todayKey)}>
+                <div className="tc-label">{todayMood ? "Today's entry" : "Start today's entry"}</div>
+                <div className="tc-weekday">
+                  {todayObj().toLocaleDateString('en-CA', { weekday:'long' })}
+                </div>
+                <div className="tc-datestr">
+                  {todayObj().toLocaleDateString('en-CA', { month:'long', day:'numeric', year:'numeric' })}
+                </div>
+                {todayMood ? (
+                  <div className="tc-mood">
+                    <span className="tc-mood-emoji">{todayMood.emoji}</span>
+                    <span className="tc-mood-text">
+                      {todayMood.label}
+                      {todayEntry.tags.length > 0
+                        ? ' · ' + todayEntry.tags.map(id => TAGS.find(t => t.id === id)?.icon).join(' ')
+                        : ''}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="tc-mood">
+                    <span className="tc-mood-text" style={{fontStyle:'italic'}}>How was your day?</span>
+                  </div>
+                )}
+                <div className="tc-arrow">→</div>
+              </div>
+
+              <div className="sec-label">Past entries</div>
+
+              {sortedKeys.filter(k => k !== todayKey).length === 0 ? (
+                <div className="empty">
+                  <div className="empty-icon">📖</div>
+                  <div className="empty-text">Past entries will appear here.<br />Use "Past day" to backfill any date.</div>
+                </div>
+              ) : (
+                <div className="timeline">
+                  {sortedKeys.filter(k => k !== todayKey).map(key => {
+                    const e    = entries[key];
+                    const mood = MOODS.find(m => m.value === e.mood);
+                    return (
+                      <div key={key} className="tl-item" onClick={() => openEntry(key)}>
+                        <div className="tl-badge" style={{ background: mood?.bg || 'var(--cream)' }}>
+                          {mood?.emoji || '—'}
+                        </div>
+                        <div className="tl-body">
+                          <div className="tl-date">{friendlyDate(key)}</div>
+                          <div className="tl-label">{mood?.label || 'No mood logged'}</div>
+                          {e.comment ? <div className="tl-comment">{e.comment}</div> : null}
+                          {e.tags.length > 0 && (
+                            <div className="tl-tags">
+                              {e.tags.map(id => {
+                                const t = TAGS.find(x => x.id === id);
+                                return <span key={id} className="tl-tag">{t?.icon} {t?.label}</span>;
+                              })}
+                            </div>
+                          )}
+                        </div>
+                        <div className="tl-arrow">›</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Entry ── */}
+          {activeKey && form && (
+            <div className="entry-wrap">
+              <div className="entry-date-row">
+                <div className="entry-label">{dayLabel(activeKey)}</div>
+                <div className="entry-date">{formatLong(activeKey)}</div>
+              </div>
+
+              {/* Mood */}
+              <div className="block">
+                <div className="block-label">Overall day — 1 unbearable · 5 thriving</div>
+                <div className="mood-row">
+                  {MOODS.map(m => (
+                    <button key={m.value}
+                      className={`mood-btn${form.mood === m.value ? ' sel' : ''}`}
+                      style={form.mood === m.value ? { borderColor:m.color, background:m.bg } : {}}
+                      onClick={() => { setForm(f => ({ ...f, mood:m.value })); setSaved(false); }}>
+                      <span className="mn" style={form.mood === m.value ? { color:m.color } : {}}>{m.value}</span>
+                      <span className="me">{m.emoji}</span>
+                      <span className="ml">{m.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tags */}
+              <div className="block">
+                <div className="block-label">What shaped the day?</div>
+                <div className="tags-wrap">
+                  {TAGS.map(t => (
+                    <button key={t.id}
+                      className={`tag-btn${form.tags.includes(t.id) ? ' sel' : ''}`}
+                      onClick={() => toggle('tags', t.id)}>
+                      <span>{t.icon}</span><span>{t.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Distortions */}
+              <div className="block">
+                <div className="block-label">Any thinking traps today?</div>
+                <div className="dist-grid">
+                  {DISTORTIONS.map(d => (
+                    <button key={d.id}
+                      className={`dist-btn${form.distortions.includes(d.id) ? ' sel' : ''}`}
+                      onClick={() => toggle('distortions', d.id)}>
+                      <div className="dl">{d.label}</div>
+                      <div className="dd">{d.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Comment */}
+              <div className="block">
+                <div className="block-label">Notes</div>
+                <textarea className="comment"
+                  placeholder="Anything worth capturing — what happened, what you noticed, what you'd tell yourself tomorrow…"
+                  value={form.comment}
+                  onChange={e => { setForm(f => ({ ...f, comment:e.target.value })); setSaved(false); }}
+                  rows={5} />
+              </div>
+            </div>
+          )}
+
+        </div>{/* end scroll-body */}
+
+        {/* Save bar (only in entry view) */}
+        {activeKey && form && (
+          <div className="save-bar">
+            <div>
+              {entries[activeKey] && (
+                <button className="btn-del" onClick={() => deleteEntry(activeKey)}>Delete</button>
+              )}
+            </div>
+            <div className="save-right">
+              <span className={`save-status${saved ? ' ok' : ''}`}>
+                {saved ? '✓ Saved' : form.mood != null ? 'Unsaved' : ''}
+              </span>
+              <button className="btn-save" onClick={saveEntry} disabled={form.mood == null}>
+                Save day
+              </button>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
