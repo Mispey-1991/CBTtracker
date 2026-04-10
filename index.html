@@ -95,6 +95,21 @@ if ('serviceWorker' in navigator) {
         );
       }
     });
+    // Schedule a local notification at the requested time
+    self.addEventListener('message', e => {
+      if (!e.data || e.data.type !== 'SCHEDULE_REMINDER') return;
+      clearTimeout(self._rt);
+      const ms = new Date(e.data.time) - Date.now();
+      if (ms > 0 && ms < 86400001) {
+        self._rt = setTimeout(() => {
+          self.registration.showNotification('Clarity · Daily Journal', {
+            body: "How was your day? Take a moment to reflect.",
+            tag: 'daily-reminder',
+            requireInteraction: false,
+          });
+        }, ms);
+      }
+    });
   `;
   const swBlob = new Blob([swCode], { type: 'application/javascript' });
   const swUrl  = URL.createObjectURL(swBlob);
@@ -483,6 +498,33 @@ const STYLE = `
   text-align:center;
 }
 .btn-export:active{opacity:.7}
+/* Reminder */
+.reminder-nudge{
+  background:var(--paper);border:1px dashed var(--border);border-radius:14px;
+  padding:13px 16px;display:flex;align-items:center;gap:11px;margin-top:20px;
+}
+.reminder-nudge-text{flex:1;font-size:13px;color:var(--ink-mid);font-weight:300;line-height:1.4}
+.reminder-nudge-text strong{font-weight:500;color:var(--ink)}
+.btn-nudge{
+  background:var(--ink);color:var(--cream);border:none;border-radius:8px;
+  padding:8px 13px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;
+  cursor:pointer;flex-shrink:0;-webkit-tap-highlight-color:transparent;
+}
+.btn-nudge:active{background:var(--rust)}
+.reminder-active{
+  background:var(--paper);border:1px solid var(--border);border-radius:14px;
+  padding:13px 16px;display:flex;align-items:center;gap:11px;margin-top:20px;
+}
+.reminder-active-info{flex:1;font-size:13px;color:var(--ink-mid);font-weight:300}
+.reminder-active-info strong{font-weight:500;color:var(--ink)}
+.reminder-active-info small{display:block;font-size:11px;color:var(--ink-faint);margin-top:2px}
+.reminder-actions{display:flex;gap:6px;flex-shrink:0}
+.btn-reminder-sm{
+  background:none;border:1px solid var(--border);border-radius:7px;
+  padding:6px 10px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink-mid);
+  cursor:pointer;-webkit-tap-highlight-color:transparent;
+}
+.btn-reminder-sm:active{opacity:.7}
 `;
 
 // ── Insights helpers & components ────────────────────────────────────────────
@@ -686,8 +728,41 @@ function App() {
   const [showBanner, setShowBanner] = useState(false);
   const [showInsights, setShowInsights] = useState(false);
   const [distDetail, setDistDetail] = useState(null);
+  const [notifPerm, setNotifPerm]       = useState('default');
+  const [reminderTime, setReminderTime] = useState(null); // 'HH:MM'
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [pickerTime, setPickerTime]     = useState('20:00');
   const lpTimer = useRef(null);
   const lpSuppressClick = useRef(false);
+
+  const scheduleReminder = useCallback((timeStr) => {
+    if (!timeStr || !('serviceWorker' in navigator)) return;
+    const [h, m] = timeStr.split(':').map(Number);
+    const next = new Date(); next.setHours(h, m, 0, 0);
+    if (next <= new Date()) next.setDate(next.getDate() + 1);
+    navigator.serviceWorker.ready.then(reg => {
+      reg.active?.postMessage({ type: 'SCHEDULE_REMINDER', time: next.toISOString() });
+    }).catch(() => {});
+  }, []);
+
+  const requestNotifPermission = async () => {
+    if (!('Notification' in window)) return;
+    const result = await Notification.requestPermission();
+    setNotifPerm(result);
+    if (result === 'granted') setShowTimePicker(true);
+  };
+
+  const handleSetReminder = (timeStr) => {
+    if (timeStr) {
+      localStorage.setItem('clarity-reminder', timeStr);
+      setReminderTime(timeStr);
+      scheduleReminder(timeStr);
+    } else {
+      localStorage.removeItem('clarity-reminder');
+      setReminderTime(null);
+    }
+    setShowTimePicker(false);
+  };
 
   const lpStart = (id) => {
     lpTimer.current = setTimeout(() => {
@@ -724,7 +799,11 @@ function App() {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) setEntries(JSON.parse(raw));
     } catch {}
-  }, []);
+    // Load notification permission + reminder
+    if ('Notification' in window) setNotifPerm(Notification.permission);
+    const saved = localStorage.getItem('clarity-reminder');
+    if (saved) { setReminderTime(saved); scheduleReminder(saved); }
+  }, [scheduleReminder]);
 
   // Capture install prompt
   useEffect(() => {
@@ -855,6 +934,26 @@ function App() {
           </div>
         )}
 
+        {showTimePicker && (
+          <div className="overlay" onClick={() => setShowTimePicker(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-handle" />
+              <div className="modal-title">Daily reminder time</div>
+              <input type="time" className="date-inp"
+                value={pickerTime}
+                onChange={e => setPickerTime(e.target.value)} />
+              <div className="modal-btns">
+                {reminderTime && (
+                  <button className="btn-cancel" onClick={() => handleSetReminder(null)}>Remove</button>
+                )}
+                <button className="btn-go" style={{flex:3}} onClick={() => handleSetReminder(pickerTime)}>
+                  Set reminder →
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="scroll-body">
 
           {/* ── Insights ── */}
@@ -925,6 +1024,37 @@ function App() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* Reminder nudge */}
+              {notifPerm === 'default' && (
+                <div className="reminder-nudge">
+                  <span style={{fontSize:20}}>🔔</span>
+                  <div className="reminder-nudge-text">
+                    <strong>Daily reminders</strong><br/>Get a nudge each evening to reflect on your day.
+                  </div>
+                  <button className="btn-nudge" onClick={requestNotifPermission}>Enable</button>
+                </div>
+              )}
+              {notifPerm === 'granted' && !reminderTime && (
+                <div className="reminder-nudge">
+                  <span style={{fontSize:20}}>🔔</span>
+                  <div className="reminder-nudge-text">Set a daily reminder to journal.</div>
+                  <button className="btn-nudge" onClick={() => setShowTimePicker(true)}>Set time</button>
+                </div>
+              )}
+              {notifPerm === 'granted' && reminderTime && (
+                <div className="reminder-active">
+                  <span style={{fontSize:20}}>🔔</span>
+                  <div className="reminder-active-info">
+                    <strong>Reminder set for {reminderTime}</strong>
+                    <small>Daily · Works while app is open or recent</small>
+                  </div>
+                  <div className="reminder-actions">
+                    <button className="btn-reminder-sm" onClick={() => { setPickerTime(reminderTime); setShowTimePicker(true); }}>Edit</button>
+                    <button className="btn-reminder-sm" onClick={() => handleSetReminder(null)}>×</button>
+                  </div>
                 </div>
               )}
             </div>
