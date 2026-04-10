@@ -103,7 +103,7 @@ if ('serviceWorker' in navigator) {
       if (ms > 0 && ms < 86400001) {
         self._rt = setTimeout(() => {
           self.registration.showNotification('Clarity · Daily Journal', {
-            body: "How was your day? Take a moment to reflect.",
+            body: "How was your day",
             tag: 'daily-reminder',
             requireInteraction: false,
           });
